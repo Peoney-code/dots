@@ -7,15 +7,14 @@ if not (vim.uv or vim.loop).fs_stat(lazypath) then
 end
 vim.opt.rtp:prepend(lazypath)
 
+local keymaps = require("keymaps")
+
 require("lazy").setup({
     -- Theme & appearance
     {
         "folke/tokyonight.nvim",
         lazy = false,
         priority = 1000,
-        config = function()
-            vim.cmd([[colorscheme tokyonight-night]])
-        end,
     },
     -- Treesitter syntax highlighter
     {
@@ -35,9 +34,24 @@ require("lazy").setup({
     },
     {
         "williamboman/mason-lspconfig.nvim",
-        dependencies = {"williamboman/mason.nvim", "neovim/nvim-lspconfig"},
+        dependencies = { "williamboman/mason.nvim", "neovim/nvim-lspconfig" },
         config = function()
-            require("mason-lspconfig").setup()
+            require("lsp").setup()
+        end,
+    },
+    -- Debugging (DAP): C++, Rust, Go — local and remote attach
+    {
+        "mfussenegger/nvim-dap",
+        dependencies = {
+            "rcarriga/nvim-dap-ui",
+            "theHamsta/nvim-dap-virtual-text",
+            "jay-babu/mason-nvim-dap.nvim",
+            "nvim-telescope/telescope-dap.nvim",
+            "nvim-neotest/nvim-nio",
+        },
+        config = function()
+            require("dap_config").setup()
+            require("telescope").load_extension("dap")
         end,
     },
     -- Filesystem tree
@@ -64,18 +78,75 @@ require("lazy").setup({
             require("telescope").setup()
         end,
     },
+    -- Git: signs in gutter + hunk actions
+    {
+        "lewis6991/gitsigns.nvim",
+        event = { "BufReadPre", "BufNewFile" },
+        opts = {
+            signs = {
+                add = { text = "│" },
+                change = { text = "│" },
+                delete = { text = "_" },
+                topdelete = { text = "‾" },
+                changedelete = { text = "~" },
+                untracked = { text = "┆" },
+            },
+            on_attach = require("keymaps").gitsigns_on_attach,
+        },
+    },
+    -- Git: visual TUI panel (requires `lazygit` installed on system)
+    {
+        "kdheepak/lazygit.nvim",
+        cmd = { "LazyGit", "LazyGitConfig", "LazyGitCurrentFile", "LazyGitFilter", "LazyGitFilterCurrentFile" },
+        dependencies = { "nvim-lua/plenary.nvim" },
+    },
+    -- Remote development over SSH (like VSCode Remote SSH)
+    {
+        "amitds1997/remote-nvim.nvim",
+        version = "*",
+        dependencies = {
+            "nvim-lua/plenary.nvim",
+            "MunifTanjim/nui.nvim",
+            "nvim-telescope/telescope.nvim",
+        },
+        config = function()
+            require("remote-nvim").setup()
+        end,
+    },
+    -- Buffer tabs (VSCode-like tab bar)
+    {
+        "akinsho/bufferline.nvim",
+        version = "*",
+        dependencies = { "nvim-tree/nvim-web-devicons" },
+        config = function()
+            require("bufferline").setup({
+                options = {
+                    mode = "buffers",
+                    separator_style = "thin",
+                    always_show_bufferline = true,
+                    show_buffer_close_icons = true,
+                    show_close_icon = false,
+                    diagnostics = false,
+                },
+            })
+        end,
+    },
     -- Which-key helper
     {
         "folke/which-key.nvim",
         event = "VeryLazy",
-        opts = {delay = 300,},
-        keys = {
-            {
-                "<leader>?",
-                function()
-                    require("which-key").show({ global = false})
-                end,
-                desc = "Show keybinds for current buffer",
+        opts = {
+            delay = 300,
+            spec = {
+                { "<leader>w", group = keymaps.which_key_group("windows") },
+                { "<leader>wg", group = keymaps.which_key_group("groups") },
+                { "<leader>b", group = keymaps.which_key_group("buffers") },
+                { "<leader>g", group = keymaps.which_key_group("git") },
+                { "<leader>s", group = keymaps.which_key_group("search") },
+                { "<leader>c", group = keymaps.which_key_group("code") },
+                { "<leader>f", group = keymaps.which_key_group("file") },
+                { "<leader>r", group = keymaps.which_key_group("remote") },
+                { "<leader>d", group = keymaps.which_key_group("debug") },
             },
         },
     },

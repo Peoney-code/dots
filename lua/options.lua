@@ -20,9 +20,11 @@ opt.smartcase = true	-- once the capital letter occures- search becomes case-sen
 
 -- UI
 opt.termguicolors = true	-- use 24-bit colors
-opt.cursorline = true		-- highlight current line
+
 opt.signcolumn = "yes"		-- show additional column with plugin-specific signs
 opt.scrolloff = 8		-- number of lines to fix around the cursor then scrolling
+opt.splitright = true		-- new vertical splits open on the right (like VSCode)
+opt.splitbelow = true		-- new horizontal splits open below
 
 -- Clipboard (use system clipboard lice CTRL(CMD) + C/V)
 opt.clipboard = "unnamedplus"
