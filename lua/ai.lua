@@ -590,6 +590,117 @@ function M.refresh_provider_model()
     refresh_sidebar_header()
 end
 
+local function find_ripgrep()
+    local rg = vim.fn.exepath("rg")
+    if rg ~= "" then
+        return rg
+    end
+    for _, candidate in ipairs({ "/usr/bin/rg", "/usr/local/bin/rg", vim.fn.expand("~/.cargo/bin/rg") }) do
+        if candidate ~= "" and vim.fn.executable(candidate) == 1 then
+            return candidate
+        end
+    end
+    return ""
+end
+
+--- avante grep fallback passes every git-tracked file as argv → E2BIG on large repos.
+local function safe_grep_func(input, opts)
+    local Helpers = require("avante.llm_tools.helpers")
+    local Path = require("plenary.path")
+    local on_log = opts.on_log
+
+    local abs_path = Helpers.get_abs_path(input.path)
+    if not Helpers.has_permission_to_access(abs_path) then
+        return "", "No permission to access path: " .. abs_path
+    end
+    if not Path:new(abs_path):exists() then
+        return "", "No such file or directory: " .. abs_path
+    end
+
+    local function run_cmd(cmd)
+        if on_log then
+            on_log("Running command: " .. table.concat(cmd, " "))
+        end
+        return vim.system(cmd, { text = true }):wait()
+    end
+
+    local function encode_paths(stdout)
+        local filepaths = vim.split(stdout or "", "\n", { trimempty = true })
+        return vim.json.encode(filepaths), nil
+    end
+
+    local rg = find_ripgrep()
+    if rg ~= "" then
+        local cmd = { rg, "--files-with-matches", "--hidden" }
+        if input.case_sensitive then
+            table.insert(cmd, "--case-sensitive")
+        else
+            table.insert(cmd, "--ignore-case")
+        end
+        if input.include_pattern then
+            table.insert(cmd, "--glob")
+            table.insert(cmd, input.include_pattern)
+        end
+        if input.exclude_pattern then
+            table.insert(cmd, "--glob")
+            table.insert(cmd, "!" .. input.exclude_pattern)
+        end
+        table.insert(cmd, input.query)
+        table.insert(cmd, abs_path)
+        local result = run_cmd(cmd)
+        if result.code ~= 0 and (result.stdout or "") == "" and result.code ~= 1 then
+            return "", (result.stderr or "rg failed"):match("^[^\n]+")
+        end
+        return encode_paths(result.stdout)
+    end
+
+    if vim.system({ "git", "-C", abs_path, "rev-parse" }, { text = true }):wait().code == 0 then
+        local cmd = { "git", "-C", abs_path, "grep", "-l" }
+        if not input.case_sensitive then
+            table.insert(cmd, "-i")
+        end
+        table.insert(cmd, "--")
+        table.insert(cmd, input.query)
+        if input.include_pattern then
+            table.insert(cmd, input.include_pattern)
+        end
+        local result = run_cmd(cmd)
+        if result.code ~= 0 and result.code ~= 1 and (result.stdout or "") == "" then
+            return "", (result.stderr or "git grep failed"):match("^[^\n]+")
+        end
+        return encode_paths(result.stdout)
+    end
+
+    local cmd = { "grep", "-rHl" }
+    if not input.case_sensitive then
+        table.insert(cmd, "-i")
+    end
+    if input.include_pattern then
+        table.insert(cmd, "--include")
+        table.insert(cmd, input.include_pattern)
+    end
+    if input.exclude_pattern then
+        table.insert(cmd, "--exclude")
+        table.insert(cmd, input.exclude_pattern)
+    end
+    table.insert(cmd, input.query)
+    table.insert(cmd, abs_path)
+    local result = run_cmd(cmd)
+    if result.code ~= 0 and result.code ~= 1 and (result.stdout or "") == "" then
+        return "", (result.stderr or "grep failed"):match("^[^\n]+")
+    end
+    return encode_paths(result.stdout)
+end
+
+local function patch_grep_tool()
+    local ok, Grep = pcall(require, "avante.llm_tools.grep")
+    if not ok or Grep._ai_safe_grep then
+        return
+    end
+    Grep._ai_safe_grep = true
+    Grep.func = safe_grep_func
+end
+
 local function patch_input_submit_keys()
     local Sidebar = require("avante.sidebar")
     if Sidebar._ai_input_submit_patched then
@@ -766,6 +877,7 @@ function M.setup()
     apply_saved_layout()
     patch_sidebar_layout()
     patch_input_submit_keys()
+    patch_grep_tool()
 
     require("avante.api").select_model = M.open_model_picker
     require("avante.model_selector").open = M.open_model_picker
