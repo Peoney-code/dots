@@ -1,5 +1,43 @@
 local M = {}
 
+local function llm_forward_ports()
+    return {
+        vim.env.LMSTUDIO_PORT or "1234",
+        vim.env.UNSLOTH_PORT or "8888",
+        vim.env.CURSOR_PROXY_PORT or "4646",
+    }
+end
+
+--- SSH -R flags: remote 127.0.0.1:PORT → local LLM / Cursor proxy
+function M.llm_ssh_remote_forwards()
+    local parts = {}
+    for _, port in ipairs(llm_forward_ports()) do
+        parts[#parts + 1] = string.format("-R %s:127.0.0.1:%s", port, port)
+    end
+    return table.concat(parts, " ")
+end
+
+--- Inject RemoteForward into the long-lived remote-nvim SSH session (Neovim server).
+function M.setup_llm_port_forward()
+    local ok, Provider = pcall(require, "remote-nvim.providers.provider")
+    if not ok then
+        return
+    end
+    if Provider._llm_forward_patched then
+        return
+    end
+    Provider._llm_forward_patched = true
+
+    local forwards = M.llm_ssh_remote_forwards()
+    local orig_run_command = Provider.run_command
+    function Provider:run_command(command, desc, extra_opts, exit_cb, on_local_executor)
+        if self.provider_type == "ssh" and type(extra_opts) == "string" and extra_opts:match("%-L%s+%d+:localhost:%d+") then
+            extra_opts = extra_opts .. " " .. forwards
+        end
+        return orig_run_command(self, command, desc, extra_opts, exit_cb, on_local_executor)
+    end
+end
+
 local function remote_nvim()
     return require("remote-nvim")
 end

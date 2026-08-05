@@ -2,8 +2,14 @@ local M = {}
 
 local map = vim.keymap.set
 
--- Fast save
-map({"n", "i", "v"}, "<C-s>", "<cmd>w<CR>", { desc = "Save file"})
+-- Fast save (skip readonly buffers, e.g. avante sidebar)
+map("n", "<C-s>", "<cmd>w<CR>", { desc = "Save file" })
+map("v", "<C-s>", "<cmd>w<CR>", { desc = "Save file" })
+map("i", "<C-s>", function()
+    if vim.bo.modifiable then
+        vim.cmd("silent! write")
+    end
+end, { desc = "Save file" })
 -- Turn of search highlights on ESC
 map("n", "<Esc>", "<cmd>nohlsearch<CR>")
 

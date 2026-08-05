@@ -111,6 +111,7 @@ require("lazy").setup({
         },
         config = function()
             require("remote-nvim").setup()
+            require("remote").setup_llm_port_forward()
             pcall(function()
                 require("telescope").load_extension("remote-nvim")
             end)
@@ -165,7 +166,6 @@ require("lazy").setup({
                 end,
                 mapping = cmp.mapping.preset.insert({
                     ["<C-Space>"] = cmp.mapping.complete(),
-                    ["<CR>"] = cmp.mapping.confirm({ select = true }),
                     ["<Tab>"] = cmp.mapping.select_next_item(),
                     ["<S-Tab>"] = cmp.mapping.select_prev_item(),
                 }),

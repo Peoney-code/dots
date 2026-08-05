@@ -69,6 +69,16 @@ local LOCAL_PROVIDERS = {
         models_url = ("http://127.0.0.1:%s/v1/models"):format(vim.env.UNSLOTH_PORT or "8888"),
         api_key_name = "UNSLOTH_STUDIO_AUTH_TOKEN",
     },
+    cursor = {
+        label = "Cursor",
+        endpoint = ("http://127.0.0.1:%s/v1"):format(vim.env.CURSOR_PROXY_PORT or "4646"),
+        models_url = ("http://127.0.0.1:%s/v1/models"):format(vim.env.CURSOR_PROXY_PORT or "4646"),
+        health_url = ("http://127.0.0.1:%s/health"):format(vim.env.CURSOR_PROXY_PORT or "4646"),
+        api_key = vim.env.CURSOR_API_KEY or "not-needed",
+        timeout = 300000,
+        use_agent_models = true,
+        unloaded_hint = "Start cursor-agent-api-proxy locally and run `agent login`.",
+    },
 }
 
 local HIDDEN_PROVIDERS = {
@@ -78,7 +88,10 @@ local HIDDEN_PROVIDERS = {
 
 local function fetch_models_result(cfg)
     local cmd = { "curl", "-sf", cfg.models_url }
-    if cfg.api_key_name then
+    if cfg.api_key then
+        cmd[#cmd + 1] = "-H"
+        cmd[#cmd + 1] = "Authorization: Bearer " .. cfg.api_key
+    elseif cfg.api_key_name then
         local key = vim.env[cfg.api_key_name]
         if key and key ~= "" then
             cmd[#cmd + 1] = "-H"
@@ -87,7 +100,7 @@ local function fetch_models_result(cfg)
     end
 
     local ok, result = pcall(function()
-        return vim.system(cmd, { timeout = 5000 }):wait()
+        return vim.system(cmd, { timeout = cfg.fetch_timeout or 15000 }):wait()
     end)
     if not ok or not result or result.code ~= 0 then
         return { online = false, models = {} }
@@ -111,13 +124,168 @@ local function fetch_models_result(cfg)
     return { online = true, models = models }
 end
 
+local function merge_model_ids(...)
+    local seen = {}
+    local models = {}
+    for _, list in ipairs({ ... }) do
+        for _, model_id in ipairs(list) do
+            if not seen[model_id] then
+                seen[model_id] = true
+                models[#models + 1] = model_id
+            end
+        end
+    end
+    table.sort(models)
+    return models
+end
+
+local function cursor_agent_path()
+    local from_env = vim.env.CURSOR_AGENT_PATH
+    if from_env and from_env ~= "" and vim.fn.executable(from_env) == 1 then
+        return from_env
+    end
+    if vim.fn.executable("agent") == 1 then
+        return "agent"
+    end
+    return nil
+end
+
+local function parse_agent_models_output(stdout)
+    local trimmed = vim.trim(stdout)
+    if trimmed == "" then
+        return {}
+    end
+
+    local decoded_ok, body = pcall(vim.json.decode, trimmed)
+    if decoded_ok and type(body) == "table" then
+        local models = {}
+        local list = body.data or body.models or body
+        if type(list) == "table" then
+            for _, item in ipairs(list) do
+                if type(item) == "string" then
+                    models[#models + 1] = item
+                elseif type(item) == "table" and type(item.id) == "string" then
+                    models[#models + 1] = item.id
+                elseif type(item) == "table" and type(item.name) == "string" then
+                    models[#models + 1] = item.name
+                end
+            end
+        end
+        if #models > 0 then
+            table.sort(models)
+            return models
+        end
+    end
+
+    local models = {}
+    for line in vim.gsplit(trimmed, "\n", { plain = true, trimempty = true }) do
+        line = vim.trim(line)
+        if line == "" or line:match("^Available models") or line:match("^Tip:") then
+            goto continue
+        end
+        local model_id = line:match("^(%S+)%s+-") or line:match("^(%S+)$")
+        if model_id and model_id ~= "Available" then
+            models[#models + 1] = model_id
+        end
+        ::continue::
+    end
+    table.sort(models)
+    return models
+end
+
+local function fetch_cursor_models_via_cli()
+    local agent = cursor_agent_path()
+    if not agent then
+        return {}
+    end
+
+    local arg_lists = {
+        { "models", "--json" },
+        { "models" },
+        { "--list-models" },
+    }
+    for _, args in ipairs(arg_lists) do
+        local cmd = vim.list_extend({ agent }, args)
+        local ok, result = pcall(function()
+            return vim.system(cmd, { timeout = 60000 }):wait()
+        end)
+        if ok and result and result.code == 0 and result.stdout and result.stdout ~= "" then
+            local models = parse_agent_models_output(result.stdout)
+            if #models > 0 then
+                return models
+            end
+        end
+    end
+    return {}
+end
+
+local function fetch_cursor_models(cfg)
+    local cli_models = fetch_cursor_models_via_cli()
+    if cfg.use_agent_models and #cli_models > 0 then
+        return merge_model_ids(cli_models, fetch_models_result(cfg).models)
+    end
+    return fetch_models_result(cfg).models
+end
+
+local function provider_online(cfg)
+    if cfg.health_url then
+        local ok, result = pcall(function()
+            return vim.system({ "curl", "-sf", cfg.health_url }, { timeout = 3000 }):wait()
+        end)
+        if ok and result and result.code == 0 then
+            return true
+        end
+        if cfg.use_agent_models and cursor_agent_path() then
+            return #fetch_cursor_models_via_cli() > 0
+        end
+        return false
+    end
+    return #fetch_models_result(cfg).models > 0
+end
+
+local function fetch_provider_models(provider_name, cfg)
+    if provider_name == "cursor" then
+        return fetch_cursor_models(cfg)
+    end
+    return fetch_models_result(cfg).models
+end
+
 local function fetch_models(cfg)
     local result = fetch_models_result(cfg)
     return result.models
 end
 
-local function provider_online(cfg)
-    return #fetch_models(cfg) > 0
+function M.cursor_setup_message()
+    local port = vim.env.CURSOR_PROXY_PORT or "4646"
+    local lines = {}
+    if not provider_online(LOCAL_PROVIDERS.cursor) then
+        lines[#lines + 1] = ("1. Proxy: npm i -g cursor-agent-api-proxy && cursor-agent-api start %s"):format(port)
+    end
+    if not cursor_agent_path() then
+        lines[#lines + 1] = "2. CLI: curl https://cursor.com/install -fsS | bash"
+        lines[#lines + 1] = "3. Login: agent login"
+    end
+    if #lines == 0 then
+        return "Cursor proxy is up but no models returned. Run `agent login` and retry."
+    end
+    return table.concat(lines, "\n")
+end
+
+local function notify_cursor_setup_if_missing(entries)
+    for _, entry in ipairs(entries) do
+        if entry.provider == "cursor" then
+            return
+        end
+    end
+    vim.notify("Cursor models not in list:\n" .. M.cursor_setup_message(), vim.log.levels.WARN)
+end
+
+local function unloaded_hint(provider_name)
+    local cfg = LOCAL_PROVIDERS[provider_name]
+    if cfg and cfg.unloaded_hint then
+        return cfg.unloaded_hint
+    end
+    return "Start the provider server and load a model, then retry."
 end
 
 local function load_state()
@@ -245,8 +413,8 @@ local function resolve_provider_model(provider_name)
         return M.NO_MODEL_CHOSEN
     end
 
-    local status = fetch_models_result(cfg)
-    if not status.online or #status.models == 0 then
+    local models = fetch_provider_models(provider_name, cfg)
+    if #models == 0 then
         return M.NO_MODEL_LOADED
     end
 
@@ -255,7 +423,7 @@ local function resolve_provider_model(provider_name)
         return M.NO_MODEL_CHOSEN
     end
 
-    if vim.tbl_contains(status.models, chosen) then
+    if vim.tbl_contains(models, chosen) then
         return chosen
     end
 
@@ -265,7 +433,7 @@ end
 local function all_model_entries()
     local entries = {}
     for provider_name, cfg in pairs(LOCAL_PROVIDERS) do
-        for _, model_id in ipairs(fetch_models(cfg)) do
+        for _, model_id in ipairs(fetch_provider_models(provider_name, cfg)) do
             entries[#entries + 1] = {
                 provider = provider_name,
                 model = model_id,
@@ -277,6 +445,10 @@ local function all_model_entries()
         return a.label < b.label
     end)
     return entries
+end
+
+function M.list_all_model_entries()
+    return all_model_entries()
 end
 
 function M.provider_alive(name)
@@ -346,6 +518,42 @@ function M.refresh_provider_model()
     refresh_sidebar_header()
 end
 
+local function patch_input_submit_keys()
+    local Sidebar = require("avante.sidebar")
+    if Sidebar._ai_input_submit_patched then
+        return
+    end
+    Sidebar._ai_input_submit_patched = true
+
+    local function insert_newline()
+        vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-j>", true, false, true), "n", true)
+    end
+
+    local orig_create = Sidebar.create_input_container
+    function Sidebar:create_input_container()
+        orig_create(self)
+        local input = self.containers.input
+        if not input or not input.bufnr or not vim.api.nvim_buf_is_valid(input.bufnr) then
+            return
+        end
+
+        local function on_submit()
+            self:submit_input()
+        end
+
+        input:map("i", "<CR>", function()
+            local cmp = require("cmp")
+            if cmp.visible() then
+                cmp.confirm({ select = true })
+            else
+                on_submit()
+            end
+        end, { noremap = true }, true)
+
+        input:map("i", "<S-CR>", insert_newline, { noremap = true }, true)
+    end
+end
+
 local function patch_sidebar_layout()
     local Sidebar = require("avante.sidebar")
     if Sidebar._ai_layout_patched then
@@ -394,8 +602,9 @@ local function patch_sidebar_layout()
                 vim.notify("No model chosen. Pick one with <leader>a?", vim.log.levels.WARN)
                 M.open_model_picker()
             else
+                local Config = require("avante.config")
                 vim.notify(
-                    "No model loaded. Start LM Studio / Unsloth and load a model, then retry.",
+                    "No model loaded. " .. unloaded_hint(Config.provider),
                     vim.log.levels.WARN
                 )
             end
@@ -412,11 +621,13 @@ function M.open_model_picker()
         set_provider_model(Config.provider, M.NO_MODEL_LOADED, false)
         refresh_sidebar_header()
         vim.notify(
-            "No models online. Start LM Studio (1234) or Unsloth, then retry.",
+            "No models online.\n" .. M.cursor_setup_message(),
             vim.log.levels.WARN
         )
         return
     end
+
+    notify_cursor_setup_if_missing(entries)
 
     local pickers = require("telescope.pickers")
     local finders = require("telescope.finders")
@@ -481,8 +692,10 @@ function M.setup()
     load_state()
     apply_saved_layout()
     patch_sidebar_layout()
+    patch_input_submit_keys()
 
     require("avante.api").select_model = M.open_model_picker
+    require("avante.model_selector").open = M.open_model_picker
 
     vim.api.nvim_create_user_command("AvanteModels", function()
         M.open_model_picker()
@@ -491,6 +704,10 @@ function M.setup()
     vim.api.nvim_create_user_command("AvanteModes", function()
         M.open_mode_picker()
     end, { force = true, desc = "Select AI interaction mode" })
+
+    vim.api.nvim_create_user_command("AvanteCursorSetup", function()
+        vim.notify(M.cursor_setup_message(), vim.log.levels.INFO)
+    end, { force = true, desc = "Cursor AI setup instructions" })
 
     local layout_group = vim.api.nvim_create_augroup("ai_avante_layout", { clear = true })
     vim.api.nvim_create_autocmd("WinResized", {
@@ -518,21 +735,40 @@ function M.setup()
     M.apply_interaction_mode(M.current_mode)
 end
 
-local function local_provider(cfg)
-    return {
+local function local_provider(cfg, provider_name)
+    local provider = {
         __inherited_from = "openai",
         endpoint = cfg.endpoint,
         api_key_name = cfg.api_key_name or "",
-        timeout = 120000,
-        hide_in_model_selector = true,
+        timeout = cfg.timeout or 120000,
+        hide_in_model_selector = false,
         is_env_set = function()
             return provider_online(cfg)
         end,
-        extra_request_body = {
+        list_models = function()
+            return vim.tbl_map(function(model_id)
+                return {
+                    id = model_id,
+                    name = provider_name .. "/" .. model_id,
+                    display_name = string.format("[%s] %s", cfg.label, model_id),
+                }
+            end, fetch_provider_models(provider_name, cfg))
+        end,
+        extra_request_body = vim.tbl_extend("force", {
             temperature = 0.2,
             max_tokens = 8192,
-        },
+        }, cfg.extra_request_body or {}),
     }
+
+    if cfg.api_key then
+        provider.api_key = cfg.api_key
+        provider.api_key_name = ""
+        provider.parse_api_key = function()
+            return cfg.api_key
+        end
+    end
+
+    return provider
 end
 
 function M.opts()
@@ -541,7 +777,7 @@ function M.opts()
     local providers = {}
 
     for name, cfg in pairs(LOCAL_PROVIDERS) do
-        providers[name] = local_provider(cfg)
+        providers[name] = local_provider(cfg, name)
     end
 
     for _, name in ipairs(HIDDEN_PROVIDERS) do
@@ -570,6 +806,12 @@ function M.opts()
             auto_add_current_file = false,
             enable_token_counting = false,
             minimize_diff = true,
+        },
+        mappings = {
+            submit = {
+                normal = "<CR>",
+                insert = "<CR>",
+            },
         },
         windows = {
             position = "right",
