@@ -163,36 +163,13 @@ map("n", "<leader>cq", "<cmd>copen<CR>", { desc = "Open locations list" })
 map("n", "]d", function() vim.diagnostic.jump({ count = 1 }) end, { desc = "Next diagnostic" })
 map("n", "[d", function() vim.diagnostic.jump({ count = -1 }) end, { desc = "Previous diagnostic" })
 
--- AI (avante.nvim — main maps are auto-set under <leader>a* unless defined here)
-local function ai_ready()
-    local ai = require("ai")
-    if ai.env_model() or ai.has_saved_model() then
-        return true
-    end
-    local ok, Config = pcall(require, "avante.config")
-    if ok then
-        local provider = Config.providers and Config.providers[Config.provider]
-        if provider and provider.model and provider.model ~= "" then
-            return true
-        end
-    end
-    return false
-end
-
-local function ai_with_model(action)
-    return function()
-        if not ai_ready() then
-            require("ai").maybe_prompt_model()
-            return
-        end
-        action()
-    end
-end
-
-map("n", "<leader>aa", ai_with_model(function() require("avante.api").ask() end), { desc = "AI sidebar" })
-map("n", "<leader>at", ai_with_model(function() require("avante.api").toggle() end), { desc = "Toggle AI sidebar" })
-map("n", "<leader>az", ai_with_model(function() require("avante.api").zen_mode() end), { desc = "AI agent zen mode" })
+-- AI (avante.nvim)
+map("n", "<leader>aa", function() require("avante.api").ask() end, { desc = "AI sidebar" })
+map("n", "<leader>at", function() require("avante.api").toggle() end, { desc = "Toggle AI sidebar" })
+map("n", "<leader>az", function() require("avante.api").zen_mode() end, { desc = "AI agent zen mode" })
+map("n", "<leader>ap", function() require("ai").pick_provider() end, { desc = "Select AI provider" })
 map("n", "<leader>a?", function() require("ai").open_model_picker() end, { desc = "Select AI model" })
+map("n", "<leader>am", function() require("ai").open_mode_picker() end, { desc = "Select AI mode" })
 
 -- Debug (DAP)
 local dap = function(fn)

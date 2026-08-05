@@ -134,7 +134,7 @@ require("lazy").setup({
             })
         end,
     },
-    -- AI assistant (Cursor-like, local LLM via Ollama)
+    -- AI assistant (local LLM via LM Studio / Unsloth)
     {
         "yetone/avante.nvim",
         version = false,
@@ -145,6 +145,7 @@ require("lazy").setup({
             "MunifTanjim/nui.nvim",
             "nvim-telescope/telescope.nvim",
             "nvim-tree/nvim-web-devicons",
+            "hrsh7th/nvim-cmp",
             {
                 "MeanderingProgrammer/render-markdown.nvim",
                 opts = {
@@ -157,8 +158,20 @@ require("lazy").setup({
             return require("ai").opts()
         end,
         config = function(_, opts)
+            local cmp = require("cmp")
+            cmp.setup({
+                enabled = function()
+                    return vim.tbl_contains({ "AvanteInput", "AvantePromptInput" }, vim.bo.filetype)
+                end,
+                mapping = cmp.mapping.preset.insert({
+                    ["<C-Space>"] = cmp.mapping.complete(),
+                    ["<CR>"] = cmp.mapping.confirm({ select = true }),
+                    ["<Tab>"] = cmp.mapping.select_next_item(),
+                    ["<S-Tab>"] = cmp.mapping.select_prev_item(),
+                }),
+            })
             require("avante").setup(opts)
-            require("ai").post_setup()
+            require("ai").setup()
         end,
     },
     -- Which-key helper
