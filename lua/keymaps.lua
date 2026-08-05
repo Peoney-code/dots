@@ -18,18 +18,55 @@ map("n", "<leader>wd", "<C-w>s", { desc = "Split down" })
 map("n", "<leader>w=", "<C-w>=", { desc = "Equalize splits" })
 map("n", "<leader>wc", "<C-w>c", { desc = "Close window" })
 
--- Window groups / tab pages (VSCode editor groups)
-map("n", "<C-S-Left>", "<cmd>tabprevious<CR>", { desc = "Previous window group" })
-map("n", "<C-S-Right>", "<cmd>tabnext<CR>", { desc = "Next window group" })
+-- Window focus (Ctrl+arrows + terminal/OS fallbacks)
+local function map_win_focus(lhs, win_cmd, desc)
+    map("n", lhs, win_cmd, { desc = desc })
+    map("i", lhs, "<C-o>" .. win_cmd, { desc = desc })
+end
+
+for _, binding in ipairs({
+    { "<C-Left>", "<C-w>h", "Focus left window" },
+    { "<C-Down>", "<C-w>j", "Focus window below" },
+    { "<C-Up>", "<C-w>k", "Focus window above" },
+    { "<C-Right>", "<C-w>l", "Focus right window" },
+    -- xterm / foot / kitty / alacritty when Ctrl+arrow is sent as CSI, not <C-Left>
+    { "<Esc>[1;5D", "<C-w>h", "Focus left window" },
+    { "<Esc>[1;5C", "<C-w>l", "Focus right window" },
+    { "<Esc>[1;5A", "<C-w>k", "Focus window above" },
+    { "<Esc>[1;5B", "<C-w>j", "Focus window below" },
+    -- some terminals prefix CSI with Meta instead of Esc
+    { "<M-[1;5D", "<C-w>h", "Focus left window" },
+    { "<M-[1;5C", "<C-w>l", "Focus right window" },
+    { "<M-[1;5A", "<C-w>k", "Focus window above" },
+    { "<M-[1;5B", "<C-w>j", "Focus window below" },
+    -- fallback when Ctrl is captured by compositor
+    { "<A-Left>", "<C-w>h", "Focus left window" },
+    { "<A-Down>", "<C-w>j", "Focus window below" },
+    { "<A-Up>", "<C-w>k", "Focus window above" },
+    { "<A-Right>", "<C-w>l", "Focus right window" },
+}) do
+    map_win_focus(binding[1], binding[2], binding[3])
+end
+
+local function map_tab_group(lhs, cmd, desc)
+    map("n", lhs, cmd, { desc = desc })
+    map("i", lhs, "<C-o>" .. cmd, { desc = desc })
+end
+
+for _, binding in ipairs({
+    { "<C-S-Left>", "<cmd>tabprevious<CR>", "Previous window group" },
+    { "<C-S-Right>", "<cmd>tabnext<CR>", "Next window group" },
+    { "<Esc>[1;6D", "<cmd>tabprevious<CR>", "Previous window group" },
+    { "<Esc>[1;6C", "<cmd>tabnext<CR>", "Next window group" },
+    { "<M-[1;6D", "<cmd>tabprevious<CR>", "Previous window group" },
+    { "<M-[1;6C", "<cmd>tabnext<CR>", "Next window group" },
+}) do
+    map_tab_group(binding[1], binding[2], binding[3])
+end
+
 map("n", "<leader>wga", "<cmd>tabnew<CR>", { desc = "New window group" })
 map("n", "<leader>wgt", "<cmd>tab split<CR>", { desc = "New group from current layout" })
 map("n", "<leader>wgd", "<cmd>tabclose<CR>", { desc = "Close window group" })
-
--- Window focus
-map("n", "<C-Left>", "<C-w>h", { desc = "Focus left window" })
-map("n", "<C-Down>", "<C-w>j", { desc = "Focus window below" })
-map("n", "<C-Up>", "<C-w>k", { desc = "Focus window above" })
-map("n", "<C-Right>", "<C-w>l", { desc = "Focus right window" })
 
 -- Git (gitsigns)
 function M.gitsigns_on_attach(bufnr)
@@ -69,13 +106,34 @@ end
 map("n", "<leader>gg", "<cmd>LazyGit<CR>", { desc = "Open LazyGit" })
 map("n", "<leader>gG", "<cmd>LazyGitCurrentFile<CR>", { desc = "LazyGit (current file)" })
 
--- Remote SSH
-map("n", "<leader>rs", "<cmd>RemoteStart<CR>", { desc = "Connect to remote host (SSH)" })
-map("n", "<leader>rS", "<cmd>RemoteStop<CR>", { desc = "Stop remote session" })
-map("n", "<leader>ri", "<cmd>RemoteInfo<CR>", { desc = "Remote session info" })
+-- Workspaces (local auto-session + remote SSH)
+map("n", "<leader>ws", function() require("workspaces").manage() end, { desc = "Workspaces" })
 
--- FS tree
-map("n", "<leader>t", "<cmd>NvimTreeToggle<CR>", { desc = "Open/close filesystem tree pane" })
+-- Remote SSH (remote-nvim.nvim)
+map("n", "<leader>rr", function() require("workspaces").manage() end, { desc = "Open workspaces" })
+map("n", "<leader>rw", function() require("workspaces").manage() end, { desc = "Manage workspaces" })
+map("n", "<leader>ra", function() require("remote").attach_active() end, { desc = "Attach to active session" })
+map("n", "<leader>rs", function() require("remote").connect_menu() end, { desc = "Connect (all options)" })
+map("n", "<leader>rh", function() require("remote").ssh_hosts() end, { desc = "Connect via SSH config" })
+map("n", "<leader>rm", function() require("remote").ssh_manual() end, { desc = "Connect via SSH string" })
+map("n", "<leader>ri", function() require("remote").session_info() end, { desc = "Session info" })
+map("n", "<leader>rS", function() require("remote").session_stop() end, { desc = "Stop remote session" })
+map("n", "<leader>rl", function() require("remote").open_log() end, { desc = "Remote plugin log" })
+map("n", "<leader>rx", function() require("remote").cleanup_host() end, { desc = "Clean up remote host" })
+map("n", "<leader>rd", function() require("workspaces").manage() end, { desc = "Delete workspace" })
+
+-- Filesystem tree (nvim-tree)
+map("n", "<leader>t", "<cmd>NvimTreeToggle<CR>", { desc = "Toggle file tree" })
+map("n", "<leader>to", "<cmd>NvimTreeOpen<CR>", { desc = "Open file tree" })
+map("n", "<leader>tc", "<cmd>NvimTreeClose<CR>", { desc = "Close file tree" })
+map("n", "<leader>tf", "<cmd>NvimTreeFocus<CR>", { desc = "Focus file tree" })
+map("n", "<leader>tr", "<cmd>NvimTreeRefresh<CR>", { desc = "Refresh file tree" })
+map("n", "<leader>ts", "<cmd>NvimTreeFindFile<CR>", { desc = "Reveal file in tree" })
+map("n", "<leader>tS", "<cmd>NvimTreeFindFileToggle<CR>", { desc = "Reveal file, toggle tree" })
+map("n", "<leader>te", "<cmd>NvimTreeCollapse<CR>", { desc = "Collapse tree" })
+map("n", "<leader>tE", "<cmd>NvimTreeCollapseKeepBuffers<CR>", { desc = "Collapse tree (keep open dirs)" })
+map("n", "<leader>t+", "<cmd>NvimTreeResize +5<CR>", { desc = "Widen file tree" })
+map("n", "<leader>t-", "<cmd>NvimTreeResize -5<CR>", { desc = "Narrow file tree" })
 
 -- Search (telescope)
 map("n", "<leader>sf", function() require("telescope.builtin").find_files() end, { desc = "Find file by name" })
@@ -104,6 +162,37 @@ map("n", "<leader>cp", "<cmd>cprev<CR>", { desc = "Previous location" })
 map("n", "<leader>cq", "<cmd>copen<CR>", { desc = "Open locations list" })
 map("n", "]d", function() vim.diagnostic.jump({ count = 1 }) end, { desc = "Next diagnostic" })
 map("n", "[d", function() vim.diagnostic.jump({ count = -1 }) end, { desc = "Previous diagnostic" })
+
+-- AI (avante.nvim — main maps are auto-set under <leader>a* unless defined here)
+local function ai_ready()
+    local ai = require("ai")
+    if ai.env_model() or ai.has_saved_model() then
+        return true
+    end
+    local ok, Config = pcall(require, "avante.config")
+    if ok then
+        local provider = Config.providers and Config.providers[Config.provider]
+        if provider and provider.model and provider.model ~= "" then
+            return true
+        end
+    end
+    return false
+end
+
+local function ai_with_model(action)
+    return function()
+        if not ai_ready() then
+            require("ai").maybe_prompt_model()
+            return
+        end
+        action()
+    end
+end
+
+map("n", "<leader>aa", ai_with_model(function() require("avante.api").ask() end), { desc = "AI sidebar" })
+map("n", "<leader>at", ai_with_model(function() require("avante.api").toggle() end), { desc = "Toggle AI sidebar" })
+map("n", "<leader>az", ai_with_model(function() require("avante.api").zen_mode() end), { desc = "AI agent zen mode" })
+map("n", "<leader>a?", function() require("ai").open_model_picker() end, { desc = "Select AI model" })
 
 -- Debug (DAP)
 local dap = function(fn)

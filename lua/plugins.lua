@@ -111,6 +111,9 @@ require("lazy").setup({
         },
         config = function()
             require("remote-nvim").setup()
+            pcall(function()
+                require("telescope").load_extension("remote-nvim")
+            end)
         end,
     },
     -- Buffer tabs (VSCode-like tab bar)
@@ -131,12 +134,39 @@ require("lazy").setup({
             })
         end,
     },
+    -- AI assistant (Cursor-like, local LLM via Ollama)
+    {
+        "yetone/avante.nvim",
+        version = false,
+        build = "make",
+        event = "VeryLazy",
+        dependencies = {
+            "nvim-lua/plenary.nvim",
+            "MunifTanjim/nui.nvim",
+            "nvim-telescope/telescope.nvim",
+            "nvim-tree/nvim-web-devicons",
+            {
+                "MeanderingProgrammer/render-markdown.nvim",
+                opts = {
+                    file_types = { "markdown", "Avante" },
+                },
+                ft = { "markdown", "Avante" },
+            },
+        },
+        opts = function()
+            return require("ai").opts()
+        end,
+        config = function(_, opts)
+            require("avante").setup(opts)
+            require("ai").post_setup()
+        end,
+    },
     -- Which-key helper
     {
         "folke/which-key.nvim",
         event = "VeryLazy",
         opts = {
-            delay = 300,
+            delay = 200,
             spec = {
                 { "<leader>w", group = keymaps.which_key_group("windows") },
                 { "<leader>wg", group = keymaps.which_key_group("groups") },
@@ -145,7 +175,9 @@ require("lazy").setup({
                 { "<leader>s", group = keymaps.which_key_group("search") },
                 { "<leader>c", group = keymaps.which_key_group("code") },
                 { "<leader>f", group = keymaps.which_key_group("file") },
+                { "<leader>t", group = keymaps.which_key_group("tree") },
                 { "<leader>r", group = keymaps.which_key_group("remote") },
+                { "<leader>a", group = keymaps.which_key_group("ai") },
                 { "<leader>d", group = keymaps.which_key_group("debug") },
             },
         },
@@ -160,6 +192,19 @@ require("lazy").setup({
             -- Auto-save & auto-restore on open/close
             auto_save = true,
             auto_restore = true,
+            pre_restore_cmds = {
+                function()
+                    local ok, workspaces = pcall(require, "workspaces")
+                    if ok and workspaces.startup_blocks_session_restore() then
+                        return false
+                    end
+                    return true
+                end,
+            },
         },
+        config = function(_, opts)
+            require("auto-session").setup(opts)
+            require("workspaces").setup_startup()
+        end,
     },
 })

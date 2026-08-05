@@ -6,7 +6,7 @@ vim.g.maplocalleader = " "
 
 -- Lines numbers
 opt.number = true
-opt.relativenumber = true
+opt.relativenumber = false
 
 -- Tabs and spaces
 opt.tabstop = 4

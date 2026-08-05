@@ -26,7 +26,6 @@ function M.setup()
             "pyright",
             "clangd",
             "rust_analyzer",
-            -- gopls requires `go` in PATH (pacman -S go); install manually via :Mason after that
             "gopls",
             "ts_ls",
             "bashls",
