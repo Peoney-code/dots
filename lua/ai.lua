@@ -78,12 +78,36 @@ local LOCAL_PROVIDERS = {
         api_key = vim.env.CURSOR_API_KEY or "cursor",
         timeout = 600000,
         use_agent_models = true,
+        default_model = vim.env.CURSOR_DEFAULT_MODEL or "composer-2",
         unloaded_hint = "Start cursor-openai-api on Mac (see :AvanteCursorSetup).",
     },
 }
 
 function M.is_remote_session()
     return vim.g.remote_neovim_host == true
+end
+
+local function cursor_tools_enabled()
+    if vim.env.CURSOR_DISABLE_TOOLS == "1" then
+        return false
+    end
+    if vim.env.CURSOR_ENABLE_TOOLS == "1" then
+        return true
+    end
+    return M.current_mode == "agent"
+end
+
+local function sync_cursor_provider_tools()
+    local ok, Config = pcall(require, "avante.config")
+    if not ok or not Config.providers or not Config.providers.cursor then
+        return
+    end
+    local enabled = cursor_tools_enabled()
+    Config.providers.cursor.disable_tools = not enabled
+    local provider = require("avante.providers").cursor
+    if provider then
+        provider.disable_tools = not enabled
+    end
 end
 
 local HIDDEN_PROVIDERS = {
@@ -258,7 +282,7 @@ function M.cursor_setup_message()
     local lines = {
         "Cursor proxy (cursor-openai-api + bun).",
         "After npm i -g, run once: ~/.config/nvim/bin/fix-cursor-openai-api",
-        "  (npm bin is broken — 'grab mouse' = shell ran JS as bash, not this fix)",
+        "  (fixes npm bin + hides thinking/errors spam in chat — restart serve after)",
         ("  %s login"):format(cli),
         "  # or: export CURSOR_API_KEY=key_... then serve",
         ("  PORT=%s %s serve"):format(port, cli),
@@ -271,6 +295,18 @@ function M.cursor_setup_message()
     end
     lines[#lines + 1] = "Proxy not reachable at 127.0.0.1:" .. port .. " — start serve on Mac."
     return table.concat(lines, "\n")
+end
+
+function M.cursor_error_help()
+    return table.concat({
+        "[Error: Connect error internal: Error] = spurious Cursor API trailing frames.",
+        "fix-cursor-openai-api patches proxy.js to hide them + strip <think>.",
+        "After patch: restart serve (kill PORT=3000 cursor-openai-api serve &).",
+        "If real failures remain:",
+        "  - cursor-openai-api login (OAuth JWT, not dashboard key alone)",
+        "  - Model composer-2 / composer-2.5",
+        "  - Ask mode or CURSOR_DISABLE_TOOLS=1 to skip agent tools",
+    }, "\n")
 end
 
 local function fetch_provider_models(provider_name, cfg)
@@ -372,6 +408,7 @@ function M.apply_interaction_mode(name)
 
     M.current_mode = name
     save_state()
+    sync_cursor_provider_tools()
     refresh_sidebar_header()
 end
 
@@ -450,6 +487,9 @@ local function resolve_provider_model(provider_name)
     end
 
     local chosen = chosen_model_for_provider(provider_name)
+    if not chosen and cfg.default_model then
+        chosen = cfg.default_model
+    end
     if not chosen then
         return M.NO_MODEL_CHOSEN
     end
@@ -742,6 +782,10 @@ function M.setup()
         vim.notify(M.cursor_setup_message(), vim.log.levels.INFO)
     end, { force = true, desc = "Cursor AI setup instructions" })
 
+    vim.api.nvim_create_user_command("AvanteCursorHelp", function()
+        vim.notify(M.cursor_error_help(), vim.log.levels.INFO)
+    end, { force = true, desc = "Cursor Connect/internal errors in chat" })
+
     local layout_group = vim.api.nvim_create_augroup("ai_avante_layout", { clear = true })
     vim.api.nvim_create_autocmd("WinResized", {
         group = layout_group,
@@ -802,7 +846,7 @@ local function local_provider(cfg, provider_name)
     end
 
     if provider_name == "cursor" then
-        provider.disable_tools = false
+        provider.disable_tools = not cursor_tools_enabled()
     end
 
     return provider

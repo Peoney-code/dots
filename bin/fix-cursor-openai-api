@@ -54,4 +54,13 @@ fi
 mkdir -p "${HOME}/.local/bin"
 cp "$WRAPPER" "${HOME}/.local/bin/cursor-openai-api"
 echo "Copied to ~/.local/bin/cursor-openai-api"
+
+PATCH_SCRIPT="$(dirname "$0")/patch-cursor-openai-proxy.js"
+PROXY_JS="${ROOT}/cursor-openai-api/dist/proxy.js"
+if [[ -f "$PATCH_SCRIPT" && -f "$PROXY_JS" ]]; then
+  bun "$PATCH_SCRIPT" "$PROXY_JS"
+else
+  echo "Skip proxy patch (missing patch script or proxy.js)" >&2
+fi
+
 echo "Test: cursor-openai-api status"
