@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# npm i -g cursor-openai-api ships a broken bin (symlink to JS, no shebang).
+# Run this after every global install/update.
+set -euo pipefail
+
+if ! command -v bun >/dev/null 2>&1; then
+  echo "Install bun first: curl -fsSL https://bun.sh/install | bash" >&2
+  exit 1
+fi
+
+if ! command -v npm >/dev/null 2>&1; then
+  echo "npm not found" >&2
+  exit 1
+fi
+
+ROOT="$(npm root -g 2>/dev/null || true)"
+CLI="${ROOT}/cursor-openai-api/dist/cli.js"
+if [[ ! -f "$CLI" ]]; then
+  echo "cursor-openai-api not installed. Run: npm i -g cursor-openai-api" >&2
+  exit 1
+fi
+
+BIN_DIR="$(dirname "$(command -v npm)")"
+WRAPPER="${BIN_DIR}/cursor-openai-api"
+
+if [[ -L "$WRAPPER" ]] || [[ ! -x "$WRAPPER" ]] || head -1 "$WRAPPER" 2>/dev/null | grep -q 'Cursor OpenAI API'; then
+  rm -f "$WRAPPER"
+  cat > "$WRAPPER" << 'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(npm root -g 2>/dev/null)"
+CLI="${ROOT}/cursor-openai-api/dist/cli.js"
+if [[ ! -f "$CLI" ]]; then
+  echo "cursor-openai-api: run npm i -g cursor-openai-api" >&2
+  exit 1
+fi
+if [[ -n "${CURSOR_API_KEY:-}" && ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/cursor-openai-api/credentials.json" ]]; then
+  mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/cursor-openai-api"
+  EXP=$(( ($(date +%s) + 86400 * 365) * 1000 ))
+  bun - "${XDG_CONFIG_HOME:-$HOME/.config}/cursor-openai-api/credentials.json" "$CURSOR_API_KEY" "$EXP" <<'BUN'
+const [creds, access, exp] = process.argv.slice(2);
+await Bun.write(creds, JSON.stringify({ access, refresh: access, expires: Number(exp) }, null, 2));
+BUN
+fi
+exec bun "$CLI" "$@"
+EOF
+  chmod +x "$WRAPPER"
+  echo "Installed wrapper: $WRAPPER"
+else
+  echo "Wrapper already OK: $WRAPPER"
+fi
+
+# ~/.local/bin copy (earlier in PATH on some setups)
+mkdir -p "${HOME}/.local/bin"
+cp "$WRAPPER" "${HOME}/.local/bin/cursor-openai-api"
+echo "Copied to ~/.local/bin/cursor-openai-api"
+echo "Test: cursor-openai-api status"

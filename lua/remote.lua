@@ -4,11 +4,11 @@ local function llm_forward_ports()
     return {
         vim.env.LMSTUDIO_PORT or "1234",
         vim.env.UNSLOTH_PORT or "8888",
-        vim.env.CURSOR_PROXY_PORT or "4646",
+        vim.env.CURSOR_API_PORT or "3000",
     }
 end
 
---- SSH -R flags: remote 127.0.0.1:PORT → local LLM / Cursor proxy
+--- SSH -R: remote 127.0.0.1:PORT → Mac (LM Studio, Unsloth, cursor-openai-api).
 function M.llm_ssh_remote_forwards()
     local parts = {}
     for _, port in ipairs(llm_forward_ports()) do

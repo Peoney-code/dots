@@ -71,15 +71,20 @@ local LOCAL_PROVIDERS = {
     },
     cursor = {
         label = "Cursor",
-        endpoint = ("http://127.0.0.1:%s/v1"):format(vim.env.CURSOR_PROXY_PORT or "4646"),
-        models_url = ("http://127.0.0.1:%s/v1/models"):format(vim.env.CURSOR_PROXY_PORT or "4646"),
-        health_url = ("http://127.0.0.1:%s/health"):format(vim.env.CURSOR_PROXY_PORT or "4646"),
-        api_key = vim.env.CURSOR_API_KEY or "not-needed",
-        timeout = 300000,
+        -- cursor-openai-api: Cursor SDK/API only (models + inference). No agent CLI.
+        -- avante agentic tools run on whichever host Neovim is on (remote OK).
+        endpoint = ("http://127.0.0.1:%s/v1"):format(vim.env.CURSOR_API_PORT or "3000"),
+        models_url = ("http://127.0.0.1:%s/v1/models"):format(vim.env.CURSOR_API_PORT or "3000"),
+        api_key = vim.env.CURSOR_API_KEY or "cursor",
+        timeout = 600000,
         use_agent_models = true,
-        unloaded_hint = "Start cursor-agent-api-proxy locally and run `agent login`.",
+        unloaded_hint = "Start cursor-openai-api on Mac (see :AvanteCursorSetup).",
     },
 }
+
+function M.is_remote_session()
+    return vim.g.remote_neovim_host == true
+end
 
 local HIDDEN_PROVIDERS = {
     "openai", "claude", "azure", "gemini", "vertex", "vertex_claude",
@@ -228,19 +233,44 @@ local function fetch_cursor_models(cfg)
 end
 
 local function provider_online(cfg)
-    if cfg.health_url then
-        local ok, result = pcall(function()
-            return vim.system({ "curl", "-sf", cfg.health_url }, { timeout = 3000 }):wait()
-        end)
-        if ok and result and result.code == 0 then
-            return true
-        end
-        if cfg.use_agent_models and cursor_agent_path() then
-            return #fetch_cursor_models_via_cli() > 0
-        end
-        return false
-    end
     return #fetch_models_result(cfg).models > 0
+end
+
+local function cursor_openai_api_cli()
+    if vim.fn.executable("cursor-openai-api") == 1 then
+        return "cursor-openai-api"
+    end
+    local ok, root = pcall(function()
+        return vim.trim(vim.fn.system({ "npm", "root", "-g" }))
+    end)
+    if ok and root ~= "" then
+        local cli = root .. "/cursor-openai-api/dist/cli.js"
+        if vim.fn.filereadable(cli) == 1 and vim.fn.executable("bun") == 1 then
+            return "bun " .. vim.fn.shellescape(cli)
+        end
+    end
+    return "~/.local/bin/cursor-openai-api"
+end
+
+function M.cursor_setup_message()
+    local port = vim.env.CURSOR_API_PORT or "3000"
+    local cli = cursor_openai_api_cli()
+    local lines = {
+        "Cursor proxy (cursor-openai-api + bun).",
+        "After npm i -g, run once: ~/.config/nvim/bin/fix-cursor-openai-api",
+        "  (npm bin is broken — 'grab mouse' = shell ran JS as bash, not this fix)",
+        ("  %s login"):format(cli),
+        "  # or: export CURSOR_API_KEY=key_... then serve",
+        ("  PORT=%s %s serve"):format(port, cli),
+    }
+    if M.is_remote_session() then
+        lines[#lines + 1] = "Remote: creds stay on Mac; SSH tunnel forwards port " .. port .. "."
+    end
+    if provider_online(LOCAL_PROVIDERS.cursor) then
+        return table.concat(lines, "\n")
+    end
+    lines[#lines + 1] = "Proxy not reachable at 127.0.0.1:" .. port .. " — start serve on Mac."
+    return table.concat(lines, "\n")
 end
 
 local function fetch_provider_models(provider_name, cfg)
@@ -253,22 +283,6 @@ end
 local function fetch_models(cfg)
     local result = fetch_models_result(cfg)
     return result.models
-end
-
-function M.cursor_setup_message()
-    local port = vim.env.CURSOR_PROXY_PORT or "4646"
-    local lines = {}
-    if not provider_online(LOCAL_PROVIDERS.cursor) then
-        lines[#lines + 1] = ("1. Proxy: npm i -g cursor-agent-api-proxy && cursor-agent-api start %s"):format(port)
-    end
-    if not cursor_agent_path() then
-        lines[#lines + 1] = "2. CLI: curl https://cursor.com/install -fsS | bash"
-        lines[#lines + 1] = "3. Login: agent login"
-    end
-    if #lines == 0 then
-        return "Cursor proxy is up but no models returned. Run `agent login` and retry."
-    end
-    return table.concat(lines, "\n")
 end
 
 local function notify_cursor_setup_if_missing(entries)
@@ -300,15 +314,32 @@ local function load_state()
     if type(state.mode) == "string" and INTERACTION_MODES[state.mode] then
         M.current_mode = state.mode
     end
+    if type(state.remote_provider) == "string" and LOCAL_PROVIDERS[state.remote_provider] then
+        M.remote_provider = state.remote_provider
+    end
+    if type(state.local_provider) == "string" and LOCAL_PROVIDERS[state.local_provider] then
+        M.local_provider = state.local_provider
+    end
     if type(state.layout) == "table" then
         M.layout = state.layout
     end
+end
+
+local function save_provider_preference(provider_name)
+    if M.is_remote_session() then
+        M.remote_provider = provider_name
+    else
+        M.local_provider = provider_name
+    end
+    save_state()
 end
 
 local function save_state()
     vim.fn.mkdir(vim.fn.stdpath("state"), "p")
     local payload = vim.json.encode({
         mode = M.current_mode,
+        remote_provider = M.remote_provider,
+        local_provider = M.local_provider,
         layout = M.layout,
     })
     pcall(vim.fn.writefile, vim.split(payload, "\n"), STATE_FILE)
@@ -434,10 +465,10 @@ local function all_model_entries()
     local entries = {}
     for provider_name, cfg in pairs(LOCAL_PROVIDERS) do
         for _, model_id in ipairs(fetch_provider_models(provider_name, cfg)) do
-            entries[#entries + 1] = {
-                provider = provider_name,
-                model = model_id,
-                label = string.format("[%s] %s", cfg.label, model_id),
+                entries[#entries + 1] = {
+                    provider = provider_name,
+                    model = model_id,
+                    label = string.format("[%s] %s", cfg.label, model_id),
             }
         end
     end
@@ -510,6 +541,7 @@ function M.apply_model(provider_name, model_id)
         return
     end
     set_provider_model(provider_name, model_id, true)
+    save_provider_preference(provider_name)
     refresh_sidebar_header()
 end
 
@@ -683,6 +715,7 @@ function M.pick_provider()
         end
         local provider = items[idx].name
         require("avante.api").switch_provider(provider)
+        save_provider_preference(provider)
         M.refresh_provider_model()
         vim.notify("AI provider: " .. LOCAL_PROVIDERS[provider].label, vim.log.levels.INFO)
     end)
@@ -768,6 +801,10 @@ local function local_provider(cfg, provider_name)
         end
     end
 
+    if provider_name == "cursor" then
+        provider.disable_tools = false
+    end
+
     return provider
 end
 
@@ -790,7 +827,15 @@ function M.opts()
     end
 
     return {
-        provider = vim.env.AVANTE_PROVIDER or "lmstudio",
+        provider = (function()
+            if M.is_remote_session() then
+                return M.remote_provider or vim.env.AVANTE_REMOTE_PROVIDER or "lmstudio"
+            end
+            if M.local_provider then
+                return M.local_provider
+            end
+            return vim.env.AVANTE_PROVIDER or "lmstudio"
+        end)(),
         mode = "agentic",
         instructions_file = "avante.md",
         providers = providers,
