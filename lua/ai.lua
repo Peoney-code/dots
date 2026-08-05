@@ -325,15 +325,6 @@ local function load_state()
     end
 end
 
-local function save_provider_preference(provider_name)
-    if M.is_remote_session() then
-        M.remote_provider = provider_name
-    else
-        M.local_provider = provider_name
-    end
-    save_state()
-end
-
 local function save_state()
     vim.fn.mkdir(vim.fn.stdpath("state"), "p")
     local payload = vim.json.encode({
@@ -343,6 +334,15 @@ local function save_state()
         layout = M.layout,
     })
     pcall(vim.fn.writefile, vim.split(payload, "\n"), STATE_FILE)
+end
+
+local function save_provider_preference(provider_name)
+    if M.is_remote_session() then
+        M.remote_provider = provider_name
+    else
+        M.local_provider = provider_name
+    end
+    save_state()
 end
 
 local function refresh_sidebar_header()
